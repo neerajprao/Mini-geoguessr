@@ -47,7 +47,7 @@ print(f"Generating Level 17 Tokens for {len(blr_df)} images...")
 def to_l17(row):
     ll = s2sphere.LatLng.from_degrees(row[lat_col], row[lon_col])
     # Level 17 provides the ~70m precision for Bangalore
-    return s2sphere.CellId.from_lat_lng(ll).parent(17).to_token()
+    return s2sphere.CellId.from_lat_lng(ll).parent(14).to_token()
 
 blr_df['s2_token'] = blr_df.apply(to_l17, axis=1)
 

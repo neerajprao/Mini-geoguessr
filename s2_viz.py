@@ -1,39 +1,53 @@
-import s2sphere
 import folium
+import pandas as pd
+import s2sphere
+import os
 
-def draw_l17_map(lat, lon, filename="level17_map.html"):
-    # 1. Get the Token and the Cell object
-    ll = s2sphere.LatLng.from_degrees(lat, lon)
-    cell_id = s2sphere.CellId.from_lat_lng(ll).parent(17)
-    cell = s2sphere.Cell(cell_id)
-    token = cell_id.to_token()
+def visualize_bangalore(csv_path, level=13):
+    if not os.path.exists(csv_path):
+        print(f"Error: {csv_path} not found!")
+        return
 
-    # 2. Get the 4 corners (vertices) for the boundary
-    vertices = []
-    for i in range(4):
-        v = s2sphere.LatLng.from_point(cell.get_vertex(i))
-        vertices.append([v.lat().degrees, v.lng().degrees])
+    df = pd.read_csv(csv_path)
+    print(f"Read {len(df)} rows from CSV.")
 
-    # 3. Create the Map (Zoomed in close)
-    m = folium.Map(location=[lat, lon], zoom_start=19, tiles="openstreetmap")
+    # Calculate tokens for the requested level
+    def get_token(row):
+        ll = s2sphere.LatLng.from_degrees(row['latitude'], row['longitude'])
+        return s2sphere.CellId.from_lat_lng(ll).parent(level).to_token()
 
-    # 4. Add the Level 17 Polygon
-    folium.Polygon(
-        locations=vertices,
-        color="red",
-        weight=5,
-        fill=True,
-        fill_color="red",
-        fill_opacity=0.2,
-        popup=f"Level 17 Cell: {token}"
-    ).add_to(m)
+    df['viz_token'] = df.apply(get_token, axis=1)
+    unique_tokens = df['viz_token'].unique()
+    print(f"Found {len(unique_tokens)} unique Level {level} boxes to draw.")
 
-    # 5. Add a marker for the exact point
-    folium.Marker([lat, lon], tooltip="Input Point").add_to(m)
+    # Center map on the average of your data points
+    avg_lat = df['latitude'].mean()
+    avg_lon = df['longitude'].mean()
+    print(f"Centering map at: {avg_lat}, {avg_lon}")
+    
+    m = folium.Map(location=[avg_lat, avg_lon], zoom_start=12)
 
-    m.save(filename)
-    print(f"Success! Level 17 map saved as {filename}")
+    for token in unique_tokens[:500]: # Limit to 500 for speed
+        cell_id = s2sphere.CellId.from_token(token)
+        cell = s2sphere.Cell(cell_id)
+        
+        vertices = []
+        for i in range(4):
+            v = s2sphere.LatLng.from_point(cell.get_vertex(i))
+            vertices.append([v.lat().degrees, v.lng().degrees])
+        
+        folium.Polygon(
+            locations=vertices,
+            color="blue" if level == 12 else "red",
+            fill=True,
+            fill_opacity=0.3,
+            popup=f"L{level} Token: {token}"
+        ).add_to(m)
 
-if __name__ == "__main__":
-    # Change these to your home/uni coordinates to see the 'Box'
-    draw_l17_map(13.3379, 77.1173)
+    out_file = f"blr_l{level}_viz.html"
+    m.save(out_file)
+    print(f"SUCCESS: Map saved as {out_file} in your current folder.")
+
+# Run for both levels
+visualize_bangalore('bangalore_metadata.csv', level=12)
+visualize_bangalore('bangalore_metadata.csv', level=13)

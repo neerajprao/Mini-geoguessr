@@ -1,34 +1,32 @@
+import os
+import shutil
+import pandas as pd
 import s2sphere
 
-def get_s2_token_l17(lat, lon):
+def organize_by_s2(csv_path, image_dir, target_level=13):
     """
-    Converts Lat/Lon to a Level 17 Hex Token.
-    Precision: ~70 meters.
+    Moves images into folders named after their S2 tokens.
     """
-    # 1. Create LatLng object
-    ll = s2sphere.LatLng.from_degrees(lat, lon)
+    df = pd.read_csv(csv_path)
+    output_base = f"data/blr_L{target_level}"
     
-    # 2. Map to Cell ID and truncate to Level 17
-    cell_id = s2sphere.CellId.from_lat_lng(ll).parent(17)
+    print(f"Organizing images for Level {target_level}...")
     
-    # 3. Return the Hex Token (The 'Label')
-    return cell_id.to_token()
+    for _, row in df.iterrows():
+        # Get the token for the requested level
+        ll = s2sphere.LatLng.from_degrees(row['latitude'], row['longitude'])
+        cell_id = s2sphere.CellId.from_lat_lng(ll).parent(target_level)
+        token = cell_id.to_token()
+        
+        # Paths
+        src_path = os.path.join(image_dir, f"{row['id']}.jpg")
+        dest_dir = os.path.join(output_base, token)
+        
+        if os.path.exists(src_path):
+            os.makedirs(dest_dir, exist_ok=True)
+            shutil.copy(src_path, os.path.join(dest_dir, f"{row['id']}.jpg"))
+            
+    print(f"Done! Data organized in {output_base}")
 
-def get_metadata(token):
-    """Returns center coordinates for a given token."""
-    cell_id = s2sphere.CellId.from_token(token)
-    latlng = cell_id.to_lat_lng()
-    return latlng.lat().degrees, latlng.lng().degrees
-
-# --- TEST RUN ---
-if __name__ == "__main__":
-    # Tumakuru coordinates
-    t_lat, t_lon = 13.3379, 77.1173
-    
-    l17_token = get_s2_token_l17(t_lat, t_lon)
-    c_lat, c_lon = get_metadata(l17_token)
-    
-    print(f"--- S2 Level 17 Results ---")
-    print(f"Target Location: {t_lat}, {t_lon}")
-    print(f"Level 17 Token:  {l17_token}")
-    print(f"Cell Center:     {c_lat}, {c_lon}")
+# Usage: 
+# organize_by_s2('bangalore_metadata.csv', 'data/images', target_level=13)
