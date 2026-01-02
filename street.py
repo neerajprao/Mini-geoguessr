@@ -1,74 +1,64 @@
-import os
-import time
-import io
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
-from PIL import Image
+import osmnx as ox
+import mercantile
+import pandas as pd
+import geopandas as gpd
+from shapely.geometry import Point
 
-# --- CONFIGURATION ---
-# Sample Bangalore coordinates (Road-only)
-LOCATIONS = [
-    (12.9756, 77.6067),  # MG Road
-    (12.9279, 77.6271),  # Koramangala
-]
-OUTPUT_FOLDER = "Bangalore_Dataset_WebP"
-# ---------------------
-
-def setup_driver():
-    chrome_options = Options()
-    # options.add_argument("--headless") # Uncomment to run in background
-    chrome_options.add_argument("--window-size=1920,1080") # High Resolution
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
-    return driver
-
-def capture_and_convert(driver, lat, lon, folder):
-    if not os.path.exists(folder): os.makedirs(folder)
-
-    for i in range(8):
-        heading = i * 45
-        # The URL structure controls the camera angle:
-        # 3a (Street View), 75y (FOV), {heading}h (Rotation), 90t (Pitch)
-        url = f"https://www.google.com/maps/@{lat},{lon},3a,75y,{heading}h,90t/data=!3m6!1e1!3m4!1s!2e0!7i16384!8i8192"
-        
-        driver.get(url)
-        time.sleep(4) # Wait for high-res textures to load
-
-        # HIDE UI ELEMENTS: CSS Injection to remove buttons, search bars, and labels
-        driver.execute_script("""
-            var selectors = [
-                '.widget-image-header', '.scene-footer', '#pane', 
-                '#titlecard', '.id-omnibox-container', '.gmnoprint',
-                '.app-viewcard-strip', '.watermark'
-            ];
-            selectors.forEach(selector => {
-                var elements = document.querySelectorAll(selector);
-                elements.forEach(el => el.style.display = 'none');
-            });
-        """)
-        
-        # Take screenshot as binary data (saves disk I/O)
-        png_data = driver.get_screenshot_as_png()
-        
-        # Convert to WebP using Pillow
-        img = Image.open(io.BytesIO(png_data))
-        filename = f"{folder}/blr_{lat}_{lon}_h{heading}.webp"
-        
-        # quality=80 is the sweet spot: high clarity, very low size
-        # method=6 makes the compression much more efficient (but slightly slower)
-        img.save(filename, "WEBP", quality=80, method=6)
-        print(f"Saved optimized WebP: {filename}")
-
-def main():
-    driver = setup_driver()
+def get_monaco_roads_by_tiles(zoom_level=16):
+    print(f"Fetching road network for Monaco...")
+    
+    # 1. Fetch road network for Monaco
+    # Monaco is small, so 'network_type='all'' will capture every street and walkway
     try:
-        for lat, lon in LOCATIONS:
-            print(f"Processing location: {lat}, {lon}")
-            capture_and_convert(driver, lat, lon, OUTPUT_FOLDER)
-    finally:
-        driver.quit()
-        print("Done!")
+        graph = ox.graph_from_place("Monaco", network_type='all')
+    except Exception as e:
+        print(f"Error fetching data: {e}")
+        return None
+    
+    # Convert graph to GeoDataFrame (edges represent the roads)
+    nodes, edges = ox.graph_to_gdfs(graph)
+    
+    # 2. Get the bounding box of the country
+    west, south, east, north = edges.total_bounds
+    
+    # 3. Generate all tiles at the specified zoom level
+    tiles = list(mercantile.tiles(west, south, east, north, zoom_level))
+    print(f"Total tiles to process at Level {zoom_level}: {len(tiles)}")
+    
+    tile_data = []
+
+    # 4. Extract road coordinates and map them to tiles
+    for _, row in edges.iterrows():
+        # Handle different geometry types
+        if row.geometry.geom_type == 'LineString':
+            coords = list(row.geometry.coords)
+        elif row.geometry.geom_type == 'MultiLineString':
+            coords = [c for line in row.geometry.geoms for c in line.coords]
+        else:
+            continue
+
+        for lon, lat in coords:
+            # Map coordinate to Slippy Map tile
+            tile = mercantile.tile(lon, lat, zoom_level)
+            tile_data.append({
+                'latitude': lat,
+                'longitude': lon,
+                'tile_x': tile.x,
+                'tile_y': tile.y,
+                'tile_z': tile.z,
+                'road_name': row.get('name', 'Unnamed Road')
+            })
+
+    # 5. Clean and Save
+    df = pd.DataFrame(tile_data)
+    df = df.drop_duplicates(subset=['latitude', 'longitude', 'tile_x', 'tile_y'])
+    
+    output_file = f"monaco_roads_level{zoom_level}.csv"
+    df.to_csv(output_file, index=False)
+    
+    print(f"Success! Found {len(df)} unique road points across {len(tiles)} tiles.")
+    print(f"Data saved to {output_file}")
+    return df
 
 if __name__ == "__main__":
-    main()
+    get_monaco_roads_by_tiles(zoom_level=16)
